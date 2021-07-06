@@ -2,7 +2,6 @@ package org.testcontainers;
 
 import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
-import org.junit.jupiter.api.extension.TestInstancePostProcessor;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.MongoDBContainer;
 import org.testcontainers.images.builder.Transferable;
@@ -18,10 +17,11 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
@@ -49,7 +49,7 @@ public class MongoDbExtension implements BeforeAllCallback {
         includes = builder.includes;
         excludes = builder.excludes;
         logConsumer = builder.logConsumer;
-        paths = resolveFileResolver(builder.fileResolver).resolve();
+        paths = resolveFileResolver(builder.fileResolver).apply(resourcePath, includes, excludes);
 
         paths.forEach(p -> logConsumer.accept("Found: " + p.toString()));
         MongoDBContainer container = new MongoDBContainer("mongo:" + builder.mongoDbDockerVersion);
@@ -77,15 +77,19 @@ public class MongoDbExtension implements BeforeAllCallback {
         }
     }
 
-    private FileResolver resolveFileResolver(FileResolver fileResolver) {
-        return fileResolver == null ? new DefaultFileResolver(this) : fileResolver;
+    private TriFunction<String, Set<String>, Set<String>, List<Path>> resolveFileResolver(TriFunction<String, Set<String>, Set<String>, List<Path>> fileResolver) {
+        return fileResolver == null ? defaultFileResolver() : fileResolver;
+    }
+
+    public List<Path> resolveFiles(TriFunction<String, Set<String>, Set<String>, List<Path>> resolver) {
+        return resolver.apply(resourcePath, includes, excludes);
     }
 
     public void executeInContainer() {
         paths.stream()
                 .map(path -> buildCommand(path, dropCollection))
                 .peek(command -> logConsumer.accept("Command: " + command))
-                .forEach(command-> executeInContainer(mongoDBContainer, command));
+                .forEach(command -> executeInContainer(mongoDBContainer, command));
     }
 
     public MongoDBContainer getMongoDbContainer() {
@@ -105,8 +109,18 @@ public class MongoDbExtension implements BeforeAllCallback {
         executeInContainer();
     }
 
-    public interface FileResolver {
-        List<Path> resolve();
+    private TriFunction<String, Set<String>, Set<String>, List<Path>> defaultFileResolver() {
+        return (resourceBasePath, includes, excludes) -> new DefaultFileResolver(resourceBasePath, includes, excludes).resolve();
+    }
+
+    @FunctionalInterface
+    public interface TriFunction<A, B, C, O> {
+        O apply(A a, B b, C c);
+
+        default <P> TriFunction<A, B, C, P> andThen(Function<? super O, ? extends P> after) {
+            Objects.requireNonNull(after);
+            return (A a, B b, C c) -> after.apply(apply(a, b, c));
+        }
     }
 
     public static class Builder {
@@ -118,7 +132,7 @@ public class MongoDbExtension implements BeforeAllCallback {
         private boolean dropCollection = true;
         private Consumer<String> logConsumer = data -> {
         };
-        private FileResolver fileResolver;
+        private TriFunction<String, Set<String>, Set<String>, List<Path>> fileResolver;
 
         public Builder resourcePath(String resourcePath) {
             Checks.checkNotNull(resourcePath, "resourcePath");
@@ -155,18 +169,18 @@ public class MongoDbExtension implements BeforeAllCallback {
         public Builder includes(String... regex) {
             Arrays.stream(regex)
                     .filter(r -> r != null && !r.isEmpty())
-                    .forEach(r -> includes.add(r));
+                    .forEach(includes::add);
             return this;
         }
 
         public Builder excludes(String... regex) {
             Arrays.stream(regex)
                     .filter(r -> r != null && !r.isEmpty())
-                    .forEach(r -> excludes.add(r));
+                    .forEach(excludes::add);
             return this;
         }
 
-        public Builder fileResolver(FileResolver fileResolver) {
+        public Builder fileResolver(TriFunction<String, Set<String>, Set<String>, List<Path>> fileResolver) {
             this.fileResolver = fileResolver;
             return this;
         }
@@ -180,15 +194,15 @@ public class MongoDbExtension implements BeforeAllCallback {
         }
     }
 
-    private static class DefaultFileResolver implements FileResolver {
+    private static class DefaultFileResolver {
         private final String resourcePath;
         private final Set<String> includes;
         private final Set<String> excludes;
 
-        DefaultFileResolver(MongoDbExtension extension) {
-            resourcePath = extension.resourcePath;
-            includes = extension.includes;
-            excludes = extension.excludes;
+        DefaultFileResolver(String resourcePath, Set<String> includes, Set<String> excludes) {
+            this.resourcePath = resourcePath;
+            this.includes = includes;
+            this.excludes = excludes;
         }
 
         static Path toPath(String path) throws URISyntaxException {
@@ -208,7 +222,6 @@ public class MongoDbExtension implements BeforeAllCallback {
                     .collect(Collectors.toList());
         }
 
-        @Override
         public List<Path> resolve() {
             try {
                 return resolveAll(toPath(resourcePath)).stream()
