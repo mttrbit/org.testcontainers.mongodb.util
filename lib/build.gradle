@@ -1,0 +1,39 @@
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
+plugins {
+    // Apply the java-library plugin for API and implementation separation.
+    id 'java-library'
+    id "org.springframework.boot" version "2.4.5"
+    id "io.spring.dependency-management" version "1.0.11.RELEASE"
+}
+
+repositories {
+    // Use Maven Central for resolving dependencies.
+    mavenCentral()
+}
+
+dependencyManagement {
+    imports {
+        mavenBom SpringBootPlugin.BOM_COORDINATES
+        mavenBom "org.testcontainers:testcontainers-bom:1.15.3"
+    }
+}
+
+dependencies {
+    implementation 'org.testcontainers:mongodb'
+    implementation 'org.junit.jupiter:junit-jupiter-api:5.7.1'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.7.1'
+    testImplementation 'org.mongodb:mongo-java-driver:3.12.8'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+tasks.named('test') {
+    // Use JUnit Platform for unit tests.
+    useJUnitPlatform()
+}
+
