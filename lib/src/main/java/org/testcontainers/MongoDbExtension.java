@@ -26,38 +26,26 @@ import java.util.stream.Collectors;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-/**
- * root/db_name/collection_name.json
- * <p>
- * TODO: add include/exclude rules
- */
-public class MongoDbExtension implements BeforeAllCallback {
+final class MongoDbExtension implements BeforeAllCallback {
 
     private final MongoDBContainer mongoDBContainer;
-    private final String resourcePath;
     private final String containerBasePath;
     private final boolean dropCollection;
     private final List<Path> paths;
-    private final Set<String> includes;
-    private final Set<String> excludes;
     private final Consumer<String> logConsumer;
+    private Consumer<String> commandConsumer;
 
     private MongoDbExtension(Builder builder) {
-        resourcePath = builder.resourcePath;
         containerBasePath = builder.containerBasePath;
         dropCollection = builder.dropCollection;
-        includes = builder.includes;
-        excludes = builder.excludes;
         logConsumer = builder.logConsumer;
-        paths = resolveFileResolver(builder.fileResolver).apply(resourcePath, includes, excludes);
+        paths = builder.fileResolver.apply(builder.resourcePath, builder.includes, builder.excludes);
 
-        paths.forEach(p -> logConsumer.accept("Found: " + p.toString()));
-        MongoDBContainer container = new MongoDBContainer("mongo:" + builder.mongoDbDockerVersion);
-        paths.forEach(p -> container.withCopyFileToContainer(
-                MountableFile.forClasspathResource(p.toString(), 0744),
-                String.format("%s/%s", containerBasePath, p)));
+        forEachPath(p -> logConsumer.accept("Found: " + p.toString()));
+        mongoDBContainer = new MongoDBContainer("mongo:" + builder.mongoDbDockerVersion);
+        forEachPath(this::addFileToContainer);
 
-        this.mongoDBContainer = container;
+        commandConsumer = command -> executeInContainer(mongoDBContainer, command);
     }
 
     public static MongoDbExtension standard() {
@@ -77,23 +65,29 @@ public class MongoDbExtension implements BeforeAllCallback {
         }
     }
 
-    private TriFunction<String, Set<String>, Set<String>, List<Path>> resolveFileResolver(TriFunction<String, Set<String>, Set<String>, List<Path>> fileResolver) {
-        return fileResolver == null ? defaultFileResolver() : fileResolver;
+    private void addFileToContainer(Path path) {
+        mongoDBContainer.withCopyFileToContainer(
+                MountableFile.forClasspathResource(path.toString(), 0744),
+                String.format("%s/%s", containerBasePath, path));
     }
 
-    public List<Path> resolveFiles(TriFunction<String, Set<String>, Set<String>, List<Path>> resolver) {
-        return resolver.apply(resourcePath, includes, excludes);
+    void forEachPath(Consumer<Path> consumer) {
+        paths.forEach(consumer::accept);
     }
 
-    public void executeInContainer() {
+    void consumeCommand(Consumer<String> consumer) {
         paths.stream()
                 .map(path -> buildCommand(path, dropCollection))
                 .peek(command -> logConsumer.accept("Command: " + command))
-                .forEach(command -> executeInContainer(mongoDBContainer, command));
+                .forEach(consumer::accept);
     }
 
     public MongoDBContainer getMongoDbContainer() {
         return mongoDBContainer;
+    }
+
+    void setCommandConsumer(Consumer<String> consumer) {
+        commandConsumer = consumer;
     }
 
     // executeInContainer(mongoDBContainer, "mongoimport --db customerprofilerepository --collection inventory --drop --file /docker-entrypoint-initdb.d/inventory2.json");
@@ -105,12 +99,8 @@ public class MongoDbExtension implements BeforeAllCallback {
     }
 
     @Override
-    public void beforeAll(ExtensionContext context) throws Exception {
-        executeInContainer();
-    }
-
-    private TriFunction<String, Set<String>, Set<String>, List<Path>> defaultFileResolver() {
-        return (resourceBasePath, includes, excludes) -> new DefaultFileResolver(resourceBasePath, includes, excludes).resolve();
+    public void beforeAll(ExtensionContext context) {
+        consumeCommand(commandConsumer);
     }
 
     @FunctionalInterface
@@ -132,7 +122,7 @@ public class MongoDbExtension implements BeforeAllCallback {
         private boolean dropCollection = true;
         private Consumer<String> logConsumer = data -> {
         };
-        private TriFunction<String, Set<String>, Set<String>, List<Path>> fileResolver;
+        private TriFunction<String, Set<String>, Set<String>, List<Path>> fileResolver = defaultFileResolver();
 
         public Builder resourcePath(String resourcePath) {
             Checks.checkNotNull(resourcePath, "resourcePath");
@@ -181,6 +171,7 @@ public class MongoDbExtension implements BeforeAllCallback {
         }
 
         public Builder fileResolver(TriFunction<String, Set<String>, Set<String>, List<Path>> fileResolver) {
+            Checks.checkNotNull(fileResolver, "fileResolver");
             this.fileResolver = fileResolver;
             return this;
         }
@@ -191,6 +182,10 @@ public class MongoDbExtension implements BeforeAllCallback {
             } catch (Exception e) {
                 throw new RuntimeException("Failed to initialize mongodb junit extension.");
             }
+        }
+
+        private TriFunction<String, Set<String>, Set<String>, List<Path>> defaultFileResolver() {
+            return (resourceBasePath, includes, excludes) -> new DefaultFileResolver(resourceBasePath, includes, excludes).resolve();
         }
     }
 
