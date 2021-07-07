@@ -9,6 +9,8 @@ Also, tescontainer-mongodb-util allows you to write tests in a more pragmatic ma
 
 # Getting started
 
+**NOTE** At the moment you need to build it locally and publish the jar to your local maven repository.
+
 You need to add the dependency (using **maven**)
 ```xml
 <dependency>
