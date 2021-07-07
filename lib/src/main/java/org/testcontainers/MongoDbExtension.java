@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
-final class MongoDbExtension implements BeforeAllCallback {
+public final class MongoDbExtension implements BeforeAllCallback {
 
     private final MongoDBContainer mongoDBContainer;
     private final String containerBasePath;
